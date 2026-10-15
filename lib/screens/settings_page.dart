@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/audio_player_service.dart';
 import '../widgets/design_dialog.dart';
 import 'about_page.dart';
+import 'band_page.dart';
 
 /// 设置页面
 /// 布局参考 cankao/1.txt 设计稿（430x932）：
@@ -134,6 +135,34 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   SizedBox(height: 10 * s),
                   _buildSectionHeader('其他', s),
+                  SizedBox(height: 10 * s),
+                  _buildCard(
+                    s: s,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const BandPage()),
+                      );
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '小米手环',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 16 * s,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.chevron_right,
+                          size: 20,
+                          color: Color(0xFFCCCCCC),
+                        ),
+                      ],
+                    ),
+                  ),
                   SizedBox(height: 10 * s),
                   _buildCard(
                     s: s,

@@ -12,6 +12,7 @@ import 'screens/profile_page.dart';
 import 'services/audio_player_handler.dart';
 import 'services/audio_player_service.dart';
 import 'services/app_init.dart';
+import 'services/band/band_service.dart';
 import 'models/song_model.dart';
 import 'utils/navigation_guard.dart';
 import 'widgets/update_checker.dart';
@@ -41,6 +42,8 @@ void main() async {
   runApp(const MyApp());
   await NeteaseMusicApi.init(debug: true);
   await AudioPlayerService().init();
+  // 小米手环通讯（可插拔）：仅当用户在设置中开启过才自动建连，默认 no-op
+  unawaited(BandService().autoStart());
   markInitialized();
 }
 

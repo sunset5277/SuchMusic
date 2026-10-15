@@ -575,6 +575,18 @@ class AudioPlayerService {
     _playModeController.add(_playMode);
   }
 
+  /// 直接设置播放模式（与循环式 [togglePlayMode] 相对）。
+  /// 供手环「播放模式页」使用：由外部指定目标模式，避免多次循环触发。
+  /// 副作用与 [togglePlayMode] 保持一致（切到乱序时重置乱序队列）。
+  void setPlayMode(PlayMode mode) {
+    if (_playMode == mode) return;
+    _playMode = mode;
+    if (_playMode == PlayMode.shuffle) {
+      _generateShuffleQueue();
+    }
+    _playModeController.add(_playMode);
+  }
+
   void _generateShuffleQueue() {
     if (_playlist.isEmpty) return;
     _shuffleQueue = List.generate(_playlist.length, (i) => i);

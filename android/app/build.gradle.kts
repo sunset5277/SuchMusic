@@ -70,3 +70,17 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+// 小米手环通讯所需的小米官方 SDK（xms-wearable-lib）。
+// 该 AAR 带专有许可，**不随仓库分发**；仅当 android/app/libs/ 下存在
+// xms-wearable-lib*.aar 时才引入依赖。未放置 AAR 时此依赖不生效，
+// 构建照常通过，手环功能在运行期自动降级为 Noop。
+dependencies {
+    val xmsAars = file("libs").listFiles { f ->
+        f.isFile && f.name.startsWith("xms-wearable-lib") && f.name.endsWith(".aar")
+    } ?: emptyArray()
+    if (xmsAars.isNotEmpty()) {
+        implementation(files(xmsAars.toList()))
+    }
+}
+
