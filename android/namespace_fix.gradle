@@ -1,0 +1,26 @@
+// on_audio_query_android（本地音乐扫描插件）未适配 AGP 8+/新 Kotlin 工具链，
+// 在项目侧统一补齐：namespace + JVM target 对齐，避免修改 pub cache
+subprojects { subproj ->
+    subproj.afterEvaluate {
+        if (subproj.name == 'on_audio_query_android') {
+            def androidExt = subproj.extensions.findByName('android')
+            if (androidExt != null) {
+                if (androidExt.namespace == null) {
+                    androidExt.namespace = 'com.lucasjosino.on_audio_query'
+                }
+                // 依赖的 androidx.fragment 1.7.1 要求 compileSdk >= 34
+                androidExt.compileSdk = 35
+                androidExt.compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_11
+                    targetCompatibility JavaVersion.VERSION_11
+                }
+            }
+            // Kotlin 任务默认跟随工具链(21)，与 Java 11 不一致，统一为 11
+            subproj.tasks.whenTaskAdded { task ->
+                if (task.name.contains('compileDebugKotlin') || task.name.contains('compileReleaseKotlin')) {
+                    task.kotlinOptions { jvmTarget = '11' }
+                }
+            }
+        }
+    }
+}

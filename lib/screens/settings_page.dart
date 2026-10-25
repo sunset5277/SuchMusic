@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/audio_player_service.dart';
+import '../services/karaoke_service.dart';
 import '../widgets/design_dialog.dart';
 import 'about_page.dart';
 
@@ -276,13 +277,16 @@ class _SettingsPageState extends State<SettingsPage> {
       contentText: '确定要清除所有缓存数据吗？',
       onConfirm: () async {
         final (count, bytes) = await AudioPlayerService.clearCoverCache();
-        if (!context.mounted) return;
+        // 逐字歌词缓存（含临时音频/PCM 文件）一并清理
+        final karaokeCount = await KaraokeService.clearCache();
+        final total = count + karaokeCount;
+        if (!mounted) return;
         final sizeText = bytes >= 1024 * 1024
             ? '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB'
             : '${(bytes / 1024).toStringAsFixed(0)} KB';
         DesignToast.show(
           context,
-          bytes > 0 ? '已清理 $count 项缓存，释放 $sizeText' : '暂无缓存需要清理',
+          total > 0 ? '已清理 $total 项缓存，释放 $sizeText' : '暂无缓存需要清理',
         );
       },
     );

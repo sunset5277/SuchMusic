@@ -8,6 +8,15 @@ import 'package:netease_music_api/netease_music_api.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/song_model.dart';
 
+/// 歌曲播放地址结果：url 为播放地址（含 fallback），isTrial 表示试听片段，
+/// fee 为服务端返回的收费标记（接口失败走 fallback 时为 null）
+class SongUrlResult {
+  final String? url;
+  final bool isTrial;
+  final int? fee;
+  const SongUrlResult(this.url, {this.isTrial = false, this.fee});
+}
+
 class MusicApiService {
   static final MusicApiService _instance = MusicApiService._internal();
   factory MusicApiService() => _instance;
@@ -149,9 +158,23 @@ class MusicApiService {
       if (result.code != 200) {
         throw Exception('搜索失败: ${result.realMsg}');
       }
-      return result.result.songs
+      final songs = result.result.songs
           .map((song) => SongModel.fromNeteaseSong(song))
           .toList();
+      // 老搜索接口不返回封面，用 songDetail 批量补齐 al.picUrl
+      if (songs.isNotEmpty) {
+        try {
+          final detail = await NeteaseMusicApi()
+              .songDetail(songs.map((s) => s.id).toList());
+          final covers = {
+            for (final s in detail.songs ?? const <Song2>[]) s.id: s.al.picUrl,
+          };
+          return [for (final s in songs) s.copyWith(coverUrl: covers[s.id])];
+        } catch (e) {
+          debugPrint('⚠️ 搜索结果封面补齐失败: $e');
+        }
+      }
+      return songs;
     } catch (e) {
       rethrow;
     }
@@ -196,28 +219,62 @@ class MusicApiService {
     }
   }
 
-  Future<String?> getSongUrl(String songId, {int br = 999000}) async {
+  /// 歌曲播放地址及试听状态：isTrial 为 true 表示返回的是试听片段
+  /// 先请求最高音质，取不到 URL 时降级 320k 重试（免费听权益通常不含无损），最后走外链兜底；
+  /// VIP 歌曲取不到地址时外链必为试听片段，按 fee 标记 isTrial 供 UI 提示
+  Future<SongUrlResult> getSongUrlInfo(String songId, {int br = 999000}) async {
+    final primary = await _requestSongUrl(songId, br);
+    if (primary.$1 != null) return primary.$1!;
+    if (br != 320000) {
+      final lower = await _requestSongUrl(songId, 320000);
+      if (lower.$1 != null) return lower.$1!;
+      if ((primary.$2 ?? lower.$2) == 1) {
+        return _fallbackResult(songId, vipTrial: true);
+      }
+    } else if (primary.$2 == 1) {
+      return _fallbackResult(songId, vipTrial: true);
+    }
+    return _fallbackResult(songId);
+  }
+
+  SongUrlResult _fallbackResult(String songId, {bool vipTrial = false}) {
+    final fallbackUrl =
+        'https://music.163.com/song/media/outer/url?id=$songId.mp3';
+    debugPrint('🎵 fallback URL${vipTrial ? '（VIP歌，外链为试听）' : ''}: $fallbackUrl');
+    return SongUrlResult(fallbackUrl, isTrial: vipTrial, fee: vipTrial ? 1 : null);
+  }
+
+  /// 返回 (结果, 服务端响应的 fee)
+  Future<(SongUrlResult?, int?)> _requestSongUrl(String songId, int br) async {
     try {
       final result = await NeteaseMusicApi()
           .songUrl([songId], br: br)
           .timeout(const Duration(seconds: 10));
+      final item = (result.data != null && result.data!.isNotEmpty)
+          ? result.data!.first
+          : null;
+      debugPrint(
+          '🎵 songUrl(br=$br) resp: code=${result.code} msg=${result.message ?? result.msg} '
+          'itemCode=${item?.code} hasUrl=${item?.url != null} fee=${item?.fee} trial=${item?.freeTrialInfo != null}');
       if (result.code == 200 &&
-          result.data != null &&
-          result.data!.isNotEmpty) {
-        final songUrlData = result.data!.first;
-        if (songUrlData.code == 200 && songUrlData.url != null) {
-          debugPrint('🎵 songUrl API 返回: ${songUrlData.url}');
-          return songUrlData.url;
-        }
+          item != null &&
+          item.code == 200 &&
+          item.url != null) {
+        return (
+          SongUrlResult(item.url,
+              isTrial: item.freeTrialInfo != null, fee: item.fee),
+          item.fee
+        );
       }
-      debugPrint('⚠️ songUrl API 未返回有效 URL，使用 fallback');
+      return (null, item?.fee);
     } catch (e) {
-      debugPrint('⚠️ songUrl API 异常: $e，使用 fallback');
+      debugPrint('⚠️ songUrl(br=$br) 异常: $e');
     }
-    final fallbackUrl =
-        'https://music.163.com/song/media/outer/url?id=$songId.mp3';
-    debugPrint('🎵 fallback URL: $fallbackUrl');
-    return fallbackUrl;
+    return (null, null);
+  }
+
+  Future<String?> getSongUrl(String songId, {int br = 999000}) async {
+    return (await getSongUrlInfo(songId, br: br)).url;
   }
 
   Future<SongModel?> getSongDetail(String songId) async {
@@ -355,9 +412,76 @@ class MusicApiService {
           NeteaseMusicApi.cookieManager.cookieJar as PersistCookieJar;
       await cookieJar.deleteAll();
       await NeteaseMusicApi().usc.onLogout();
+      _likedIds.clear();
+      _likelistLoaded = false;
       await _clearCachedUserInfo();
     } catch (e) {
       // ignore
+    }
+  }
+
+  // ---------------- 红心（喜欢歌曲） ----------------
+
+  /// 红心过的歌曲 id 缓存（进程内）。登录后懒加载拉取，红心操作同步维护。
+  final Set<String> _likedIds = {};
+  bool _likelistLoaded = false;
+
+  /// 拉取当前用户红心列表（幂等，本会话只拉一次；未登录直接跳过）
+  Future<void> ensureLikelist() async {
+    if (_likelistLoaded) return;
+    final uid = cachedUserId;
+    if (uid == null || uid.isEmpty) return;
+    try {
+      final result = await NeteaseMusicApi().likeSongList(uid);
+      if (result.code == 200) {
+        _likedIds
+          ..clear()
+          ..addAll(result.ids.map((e) => e.toString()));
+        _likelistLoaded = true;
+        debugPrint('❤️ 红心列表已加载: ${_likedIds.length} 首');
+      }
+    } catch (e) {
+      debugPrint('❌ 红心列表拉取失败: $e');
+    }
+  }
+
+  bool isLiked(String songId) => _likedIds.contains(songId);
+
+  /// 歌单广场：分类热门歌单列表（匿名可用）
+  /// [category] 分类 tag，如 '全部'/'华语'/'流行'；[limit] 返回数量
+  Future<List<PlaylistModel>> fetchCategoryPlaylists(
+      {String category = '全部', int limit = 6, int offset = 0}) async {
+    try {
+      final result = await NeteaseMusicApi()
+          .categorySongList(category: category, limit: limit, offset: offset);
+      return (result.playlists ?? [])
+          .map((p) => PlaylistModel(
+                id: p.id,
+                name: p.name ?? '',
+                coverUrl: p.coverImgUrl,
+                trackCount: p.trackCount,
+                playCount: p.playCount,
+              ))
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 歌单广场拉取失败: $e');
+      return [];
+    }
+  }
+
+  /// 红心/取消红心；成功后同步本地缓存。返回是否成功。
+  Future<bool> likeSong(String songId, bool like) async {
+    try {
+      final result = await NeteaseMusicApi().likeSong(songId, like);
+      if (result.code == 200) {
+        like ? _likedIds.add(songId) : _likedIds.remove(songId);
+        return true;
+      }
+      debugPrint('❌ 红心失败: code=${result.code}');
+      return false;
+    } catch (e) {
+      debugPrint('❌ 红心异常: $e');
+      return false;
     }
   }
 
@@ -829,29 +953,80 @@ class MusicApiService {
       // n 控制返回的完整歌曲条数：首页等只需少量歌曲时传小值可大幅减少响应体积
       final result = await NeteaseMusicApi()
           .playListDetail(playlistId, subCount: subCount, n: limit);
-      if (result.code != 200 ||
-          result.playlist == null ||
-          result.playlist!.tracks == null) {
-        return [];
+      if (result.code != 200 || result.playlist == null) return [];
+      final play = result.playlist!;
+
+      // 映射接口直接返回的完整歌曲对象
+      final byId = <String, SongModel>{};
+      for (final track in play.tracks ?? const <PlayTrack>[]) {
+        byId[track.id] = _songFromTrack(
+          id: track.id,
+          name: track.name,
+          ar: track.ar,
+          al: track.al,
+          dt: track.dt,
+        );
       }
-      return result.playlist!.tracks!
-          .map((track) => SongModel(
-                id: track.id,
-                name: track.name ?? '',
-                artist: track.ar
-                        ?.map((a) => a.name ?? '')
-                        .where((n) => n.isNotEmpty)
-                        .join(' / ') ??
-                    '',
-                album: track.al.name ?? '',
-                coverUrl: track.al.picUrl,
-                duration: track.dt,
-              ))
+
+      // 网易服务端会把 tracks 完整对象截断（登录约 20 首/匿名约 10 首），
+      // 但 trackIds 是全量返回的；缺失部分用 /api/v3/song/detail 按 id 分批补齐
+      final allIds = (play.trackIds ?? const <PlayTrackId>[])
+          .map((e) => e.id)
+          .take(limit)
           .toList();
+      if (allIds.length > byId.length) {
+        final missing = allIds.where((id) => !byId.containsKey(id)).toList();
+        for (var i = 0; i < missing.length; i += 500) {
+          final end = i + 500 > missing.length ? missing.length : i + 500;
+          try {
+            final detail =
+                await NeteaseMusicApi().songDetail(missing.sublist(i, end));
+            for (final s in detail.songs ?? const <Song2>[]) {
+              byId[s.id] = _songFromTrack(
+                id: s.id,
+                name: s.name,
+                ar: s.ar,
+                al: s.al,
+                dt: s.dt,
+              );
+            }
+          } catch (e) {
+            debugPrint('❌ 补齐歌单歌曲失败(${missing.sublist(i, end).length}首): $e');
+          }
+        }
+      }
+
+      // 按歌单原始顺序输出（已下架歌曲会缺失，自动跳过）
+      return [
+        for (final id in allIds)
+          if (byId[id] != null) byId[id]!,
+      ];
     } catch (e) {
       debugPrint('❌ 获取歌单详情失败: $e');
       return [];
     }
+  }
+
+  /// PlayTrack / Song2 共有字段 → SongModel（两个类的结构一致但无公共接口）
+  SongModel _songFromTrack({
+    required String id,
+    String? name,
+    List<Artists>? ar,
+    required Album al,
+    int? dt,
+  }) {
+    return SongModel(
+      id: id,
+      name: name ?? '',
+      artist: ar
+              ?.map((a) => a.name ?? '')
+              .where((n) => n.isNotEmpty)
+              .join(' / ') ??
+          '',
+      album: al.name ?? '',
+      coverUrl: al.picUrl,
+      duration: dt,
+    );
   }
 }
 

@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- App内更新：允许安装APK（Android 8+） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- 桌面悬浮歌词：其他应用上层显示权限（需用户在系统设置中手动授予） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <!-- 本地音乐：读取音频媒体文件（Android 13+） -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+    <!-- 本地音乐：读取存储（Android 12 及以下） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <application
         android:label="Such Music"
         android:name="${applicationName}"
@@ -33,6 +39,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 桌面悬浮歌词服务 -->
+        <service
+            android:name=".FloatingLyricService"
+            android:exported="false" />
         <!-- audio_service 后台播放服务 -->
         <service android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

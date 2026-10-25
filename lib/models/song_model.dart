@@ -8,6 +8,15 @@ class SongModel {
   final String? coverUrl;
   final int? duration;
 
+  /// 收费标记：0=免费 1=VIP 4=购买专辑 8=低音质免费，接口未返回时为 null
+  final int? fee;
+
+  /// 本地音频文件绝对路径（MediaStore data），在线歌曲为 null
+  final String? localPath;
+
+  /// 是否为本地歌曲
+  bool get isLocal => localPath != null;
+
   const SongModel({
     required this.id,
     required this.name,
@@ -15,6 +24,8 @@ class SongModel {
     required this.album,
     this.coverUrl,
     this.duration,
+    this.fee,
+    this.localPath,
   });
 
   /// 从库的 Song 类型创建
@@ -32,6 +43,7 @@ class SongModel {
       album: song.album?.name ?? '',
       coverUrl: song.album?.picUrl,
       duration: song.duration,
+      fee: song.fee,
     );
   }
 
@@ -50,6 +62,7 @@ class SongModel {
       album: song.al.name ?? '',
       coverUrl: song.al.picUrl,
       duration: song.dt,
+      fee: song.fee,
     );
   }
 
@@ -61,6 +74,8 @@ class SongModel {
     String? album,
     String? coverUrl,
     int? duration,
+    int? fee,
+    String? localPath,
   }) {
     return SongModel(
       id: id ?? this.id,
@@ -69,6 +84,8 @@ class SongModel {
       album: album ?? this.album,
       coverUrl: coverUrl ?? this.coverUrl,
       duration: duration ?? this.duration,
+      fee: fee ?? this.fee,
+      localPath: localPath ?? this.localPath,
     );
   }
 
@@ -86,6 +103,7 @@ class SongModel {
       album: (json['al'] as Map<String, dynamic>?)?['name'] as String? ?? '',
       coverUrl: (json['al'] as Map<String, dynamic>?)?['picUrl'] as String?,
       duration: json['dt'] as int?,
+      fee: json['fee'] as int?,
     );
   }
 
@@ -105,6 +123,8 @@ class SongModel {
       'album': album,
       'coverUrl': coverUrl,
       'duration': duration,
+      'fee': fee,
+      'localPath': localPath,
     };
   }
 
@@ -116,6 +136,8 @@ class SongModel {
       album: json['album'] as String? ?? '',
       coverUrl: json['coverUrl'] as String?,
       duration: json['duration'] as int?,
+      fee: json['fee'] as int?,
+      localPath: json['localPath'] as String?,
     );
   }
 }

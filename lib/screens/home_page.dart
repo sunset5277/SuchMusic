@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 import 'dart:async';
 
@@ -11,7 +12,9 @@ import '../services/app_init.dart';
 import 'playlist_detail_page.dart';
 import 'player_page.dart';
 import 'search_page.dart';
+import '../widgets/local_music_view.dart';
 import '../utils/navigation_guard.dart';
+import '../widgets/design_dialog.dart';
 
 enum CardType { fm, placeholder }
 
@@ -24,6 +27,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _apiService = MusicApiService();
+  // 顶部标签当前页：0=首页 1=本地（「歌单」暂未开放）
+  int _homeTabIndex = 0;
   List<PlaylistModel> _rankings = [];
   bool _loadingRankings = true;
   List<SongModel> _hotSongs = [];
@@ -31,6 +36,9 @@ class _HomePageState extends State<HomePage> {
   PlaylistModel? _hotChart;
   List<SongModel> _dailySongs = [];
   bool _loadingDailySongs = true;
+  List<PlaylistModel> _squarePlaylists = [];
+  bool _loadingSquare = true;
+  final Random _random = Random();
   String? _fmCoverUrl;
   SongModel? _fmFirstSong;
   StreamSubscription<SongModel?>? _fmSongSub;
@@ -48,6 +56,7 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _loadRankings();
     _loadDailySongs();
+    _loadPlaylistSquare();
     _loadFmCover();
     // FM模式切歌时，同步更新首页卡片封面
     _fmSongSub = AudioPlayerService().onCurrentSongChanged.listen((song) {
@@ -111,6 +120,45 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 歌单广场：热门歌单 18 个（6 行 × 每行 3 个），匿名可用，失败时隐藏模块
+  /// 每次随机取一页（'全部'+最热列表总量很大，偏移限制在安全范围避免越界），空结果回退第一页
+  Future<void> _loadPlaylistSquare() async {
+    await ensureInitialized;
+    final offset = _random.nextInt(150) * 18;
+    try {
+      var playlists =
+          await _apiService.fetchCategoryPlaylists(limit: 18, offset: offset);
+      if (playlists.isEmpty && offset > 0) {
+        playlists = await _apiService.fetchCategoryPlaylists(limit: 18);
+      }
+      if (!mounted) return;
+      setState(() {
+        _squarePlaylists = playlists;
+        _loadingSquare = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ 歌单广场拉取失败: $e');
+      if (!mounted) return;
+      setState(() => _loadingSquare = false);
+    }
+  }
+
+  /// 刷新按钮：换一批歌单
+  void _refreshSquare() {
+    if (_loadingSquare) return;
+    setState(() => _loadingSquare = true);
+    _loadPlaylistSquare();
+  }
+
+  void _openSquarePlaylist(PlaylistModel playlist) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlaylistDetailPage(playlist: playlist),
+      ),
+    );
+  }
+
   /// 私人FM卡片背景：取FM队列第一首歌的封面，失败时保留红色渐变。
   /// 同时记住这首歌，点卡片进FM时直接从它开始播（/personal_fm 每次调用会刷新队列）
   Future<void> _loadFmCover() async {
@@ -146,6 +194,33 @@ class _HomePageState extends State<HomePage> {
     } else {
       return '晚上好 沉浸在旋律里享受时光 🎧';
     }
+  }
+
+  /// 顶部分类标签：选中项黑字加底部下划线，未选中灰字
+  Widget _buildHomeTab(String label, {bool active = false, VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        // 选中项 padding 4 + 下划线 2 = 6，与未选中 padding 6 对齐，保证文字基线一致
+        padding: EdgeInsets.only(bottom: active ? 4 : 6),
+        decoration: active
+            ? const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: Color(0xFF1A1A1A), width: 2),
+                ),
+              )
+            : null,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            color: active ? const Color(0xFF1A1A1A) : const Color(0xFF9C9C9C),
+          ),
+        ),
+      ),
+    );
   }
 
   void _openRanking(PlaylistModel ranking) {
@@ -191,84 +266,93 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 15),
-            child: Material(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(30),
-              child: InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const SearchPage()),
-                  );
-                },
-                borderRadius: BorderRadius.circular(30),
-                child: Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 12, horizontal: 15),
-                  child: Row(
-                    children: const [
-                      Icon(
-                        Icons.search,
-                        size: 24,
-                        color: Color(0xFF09244B),
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        '搜索歌曲',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 14,
-                        ),
-                      ),
+            child: SizedBox(
+              // 必须占满整行宽度：否则 Stack 收缩为标签行宽度，
+              // Positioned(right:0) 的搜索按钮会叠在「歌单」上
+              width: double.infinity,
+              height: 40,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildHomeTab('首页',
+                          active: _homeTabIndex == 0,
+                          onTap: () {
+                            if (_homeTabIndex != 0) {
+                              setState(() => _homeTabIndex = 0);
+                            }
+                          }),
+                      const SizedBox(width: 28),
+                      _buildHomeTab('本地',
+                          active: _homeTabIndex == 1,
+                          onTap: () {
+                            if (_homeTabIndex != 1) {
+                              setState(() => _homeTabIndex = 1);
+                            }
+                          }),
+                      const SizedBox(width: 28),
+                      _buildHomeTab('歌单',
+                          onTap: () =>
+                              DesignToast.show(context, '歌单功能敬请期待')),
                     ],
                   ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 滑动卡片铺满全屏宽（父级已无水平边距）
-                  _buildSlidingCards(),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 15),
-                    child: _buildRecommendPlaylists(
-                      title: '每日推荐',
-                      songs: _dailySongs,
-                      loading: _loadingDailySongs,
-                      onSlideEnter: _openDailyRecommend,
-                      lastPageHint: '继\n续\n滑\n动\n进\n入\n每\n日\n推\n荐',
-                    ),
+                  Positioned(
+                    right: 0,
+                    child: _SearchCircleButton(),
                   ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 15),
-                    child: _buildRecommendPlaylists(
-                      controller: _recommendPageController2,
-                      title: '热歌推荐',
-                      songs: _hotSongs,
-                      loading: _loadingHotSongs,
-                      onSlideEnter: _hotChart != null
-                          ? () => _openRanking(_hotChart!)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 15),
-                    child: _buildRankingSection(),
-                  ),
-                  const SizedBox(height: 100),
                 ],
               ),
             ),
+          ),
+          Expanded(
+            child: _homeTabIndex == 1
+                ? const LocalMusicView()
+                : SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 滑动卡片铺满全屏宽（父级已无水平边距）
+                        _buildSlidingCards(),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 15),
+                          child: _buildRecommendPlaylists(
+                            title: '每日推荐',
+                            songs: _dailySongs,
+                            loading: _loadingDailySongs,
+                            onSlideEnter: _openDailyRecommend,
+                            lastPageHint: '继\n续\n滑\n动\n进\n入\n每\n日\n推\n荐',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 15),
+                          child: _buildRecommendPlaylists(
+                            controller: _recommendPageController2,
+                            title: '热歌推荐',
+                            songs: _hotSongs,
+                            loading: _loadingHotSongs,
+                            onSlideEnter: _hotChart != null
+                                ? () => _openRanking(_hotChart!)
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 15),
+                          child: _buildRankingSection(),
+                        ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 15),
+                          child: _buildPlaylistSquare(),
+                        ),
+                        const SizedBox(height: 100),
+                      ],
+                    ),
+                  ),
           ),
         ],
       ),
@@ -301,6 +385,140 @@ class _HomePageState extends State<HomePage> {
     ).then((_) {
       NavigationGuard.isPlayerPageOpen = false;
     });
+  }
+
+  /// 歌单广场模块：2 行 × 每行 3 个热门歌单卡片（封面 + 歌单名），点击进歌单详情
+  Widget _buildPlaylistSquare() {
+    // 数据为空且已结束加载：不显示占位
+    if (!_loadingSquare && _squarePlaylists.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final screenW = MediaQuery.of(context).size.width;
+    // 卡片宽 = (屏宽 - 左右 15 - 列间距 10*2) / 3；高 = 封面(正方形) + 间距 6 + 歌单名两行
+    // 文字高度留 36 而非理论值 34：中文行高渲染存在亚像素舍入（实测多出 ~0.5px），不足会触发溢出条纹
+    final cardW = (screenW - 15 - 15 - 10 * 2) / 3;
+    final cardH = cardW + 6 + 36;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              '歌单广场',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+            const Spacer(),
+            // 刷新按钮：换一批歌单（到底后自动回到第一页）；加载中保持图标不变，仅禁点
+            IconButton(
+              onPressed: _loadingSquare ? null : _refreshSquare,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              splashRadius: 18,
+              icon: SvgPicture.asset(
+                'assets/images/svg/refresh.svg',
+                width: 22,
+                height: 22,
+                colorFilter: const ColorFilter.mode(
+                    Colors.black54, BlendMode.srcIn),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_loadingSquare)
+          SizedBox(
+            height: cardH * 6 + 14 * 5,
+            child: GridView.builder(
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 10,
+                childAspectRatio: cardW / cardH,
+              ),
+              itemCount: 18,
+              itemBuilder: (_, i) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 1,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: cardW * 0.8,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          SizedBox(
+            height: cardH * 6 + 14 * 5,
+            child: GridView.builder(
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 10,
+                childAspectRatio: cardW / cardH,
+              ),
+              itemCount: _squarePlaylists.length,
+              itemBuilder: (_, i) {
+                final playlist = _squarePlaylists[i];
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _openSquarePlaylist(playlist),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AspectRatio(
+                        aspectRatio: 1,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: _SongCoverImage(
+                            url: playlist.coverUrl ?? '',
+                            width: cardW,
+                            height: cardW,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        playlist.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.3,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildSlidingCards() {
@@ -896,6 +1114,47 @@ class _HomePageState extends State<HomePage> {
   void _playSong(SongModel song) async {
     final audioPlayer = AudioPlayerService();
     await audioPlayer.playAndAdd(song);
+  }
+}
+
+/// 首页顶栏圆形搜索按钮：白底无墨水效果，按压缩放反馈（按下缩小、松开弹回）
+class _SearchCircleButton extends StatefulWidget {
+  @override
+  State<_SearchCircleButton> createState() => _SearchCircleButtonState();
+}
+
+class _SearchCircleButtonState extends State<_SearchCircleButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const SearchPage()),
+        );
+      },
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedScale(
+        scale: _pressed ? 0.86 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        // 无白色圆底，仅显示搜索图标
+        child: const SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(
+            Icons.search,
+            size: 24,
+            color: Color(0xFF09244B),
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../models/song_model.dart';
@@ -166,13 +169,8 @@ class _SearchPageState extends State<SearchPage> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-              child: Column(
-                children: [
-                  _buildSearchBar(),
-                  const SizedBox(height: 16),
-                ],
-              ),
+              padding: const EdgeInsets.fromLTRB(15, 10, 15, 6),
+              child: _buildSearchBar(),
             ),
             Expanded(
               child: Padding(
@@ -527,74 +525,188 @@ class _SearchPageState extends State<SearchPage> {
     return ListView.builder(
       itemCount: _searchResults.length,
       itemBuilder: (context, index) {
-        return _buildSongItem(_searchResults[index]);
+        return Padding(
+          padding: EdgeInsets.only(
+              bottom: index < _searchResults.length - 1 ? 12 : 0),
+          child: _buildSongItem(_searchResults[index]),
+        );
       },
     );
   }
 
   Widget _buildSongItem(SongModel song) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Material(
-          color: Colors.white,
-          child: ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            leading: null,
-            title: Text(
-              song.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: Colors.black87,
+    return GestureDetector(
+      onTap: () => _playSong(song),
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F0F0),
+                borderRadius: BorderRadius.circular(5),
               ),
+              child: song.coverUrl != null
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(5),
+                      child: _SongCoverImage(url: song.coverUrl!),
+                    )
+                  : const Icon(Icons.music_note,
+                      color: Colors.grey, size: 24),
             ),
-            subtitle: Text(
-              song.artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[500],
-              ),
-            ),
-            trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () => _playSong(song),
-                        child: SvgPicture.asset(
-                          'assets/images/svg/play_circle.svg',
-                          width: 24,
-                          height: 24,
-                          colorFilter: const ColorFilter.mode(
-                            Color(0xFFB0B0B0),
-                            BlendMode.srcIn,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SvgPicture.asset(
-                        'assets/images/svg/Dots Horizontal.svg',
-                        width: 20,
-                        height: 20,
-                        colorFilter: const ColorFilter.mode(
-                          Color(0xFFB0B0B0),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    song.name,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      height: 1.1,
+                      fontWeight: FontWeight.w400,
+                      color: Colors.black,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-            onTap: () => _playSong(song),
-          ),
+                  const SizedBox(height: 2),
+                  Text(
+                    song.artist,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.1,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0x80000000),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+}
+
+class _SongCoverImage extends StatefulWidget {
+  final String url;
+  const _SongCoverImage({required this.url});
+
+  @override
+  State<_SongCoverImage> createState() => _SongCoverImageState();
+}
+
+class _SongCoverImageState extends State<_SongCoverImage>
+    with SingleTickerProviderStateMixin {
+  Uint8List? _imageBytes;
+  bool _loading = true;
+
+  /// 封面加载中的扫光动画（高光条循环扫过）
+  late final AnimationController _shimmerController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  static final Dio _dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 10),
+  ));
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+  }
+
+  @override
+  void dispose() {
+    _shimmerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadImage() async {
+    try {
+      final response = await _dio.get(
+        '${widget.url.split('?').first}?param=300y300',
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {
+            'Referer': 'https://music.163.com',
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+        ),
+      );
+      if (response.statusCode == 200 && response.data != null) {
+        if (mounted) {
+          setState(() {
+            _imageBytes = response.data as Uint8List;
+            _loading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _loading = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    } finally {
+      if (mounted) _shimmerController.stop();
+    }
+  }
+
+  Widget _buildShimmer() {
+    return AnimatedBuilder(
+      animation: _shimmerController,
+      builder: (context, _) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Color(0xFFF0F0F0)),
+            Positioned(
+              left: -52 + 104 * _shimmerController.value,
+              top: 0,
+              bottom: 0,
+              width: 52,
+              child: const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      Color(0x00F0F0F0),
+                      Colors.white,
+                      Color(0x00F0F0F0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return _buildShimmer();
+    }
+    if (_imageBytes != null) {
+      return Image.memory(
+        _imageBytes!,
+        width: 46,
+        height: 46,
+        fit: BoxFit.cover,
+      );
+    }
+    return const Icon(Icons.music_note, color: Colors.grey);
   }
 }

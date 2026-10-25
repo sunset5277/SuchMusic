@@ -36,6 +36,9 @@ migrate_working_dir/
 # Symbolication related
 app.*.symbols
 
+# R8 混淆映射归档（体积大，仅本地留档）
+/mappings/
+
 # Obfuscation related
 app.*.map.json
 

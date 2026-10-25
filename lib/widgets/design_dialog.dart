@@ -175,45 +175,93 @@ class DesignDialog {
   }
 }
 
-/// 设计稿风格轻提示（参照 cankao/1.txt：黑底白字圆角提示条，屏幕居中）
-/// 宽 261/430 屏宽、高 36、圆角 8、纯黑底、白字 15.6 号，2 秒后自动消失
+/// 设计稿风格轻提示：白底黑字圆角提示条，屏幕底部居中
+/// 宽度随文字内容自适应（仅超长时截断），圆角 8、白底黑字
+/// 出现：上滑淡入；消失：下滑淡出，2 秒后自动退出
 class DesignToast {
   DesignToast._();
 
   static void show(BuildContext context, String text) {
-    final k = DesignDialog.s(context);
     final overlay = Overlay.of(context, rootOverlay: true);
     late final OverlayEntry entry;
     entry = OverlayEntry(
-      builder: (_) => Positioned.fill(
-        child: IgnorePointer(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: EdgeInsets.only(bottom: 80 * k),
-              child: Material(
-                color: Colors.transparent,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.86,
-                  ),
-                  child: Container(
-                    height: 36 * k,
-                    padding: EdgeInsets.symmetric(horizontal: 8 * k),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8 * k),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.12),
-                          blurRadius: 10 * k,
-                          offset: Offset(0, 2 * k),
-                        ),
-                      ],
-                    ),
-                    child: Center(
+      builder: (_) => _ToastView(
+        text: text,
+        onDismissed: () {
+          if (entry.mounted) entry.remove();
+        },
+      ),
+    );
+    overlay.insert(entry);
+  }
+}
+
+class _ToastView extends StatefulWidget {
+  final String text;
+  final VoidCallback onDismissed;
+  const _ToastView({required this.text, required this.onDismissed});
+
+  @override
+  State<_ToastView> createState() => _ToastViewState();
+}
+
+class _ToastViewState extends State<_ToastView> {
+  bool _shown = false;
+  static const _dur = Duration(milliseconds: 260);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _shown = true);
+    });
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() => _shown = false);
+      Future.delayed(_dur, () {
+        if (mounted) widget.onDismissed();
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final k = DesignDialog.s(context);
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: 80 * k),
+            child: AnimatedSlide(
+              offset: _shown ? Offset.zero : const Offset(0, 0.3),
+              duration: _dur,
+              curve: _shown ? Curves.easeOutCubic : Curves.easeInCubic,
+              child: AnimatedOpacity(
+                opacity: _shown ? 1.0 : 0.0,
+                duration: _dur,
+                child: Material(
+                  color: Colors.transparent,
+                  child: IntrinsicWidth(
+                    child: Container(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width * 0.86,
+                      ),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 16 * k, vertical: 9 * k),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8 * k),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 20 * k,
+                            offset: Offset(0, 4 * k),
+                          ),
+                        ],
+                      ),
                       child: Text(
-                        text,
+                        widget.text,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
@@ -233,9 +281,5 @@ class DesignToast {
         ),
       ),
     );
-    overlay.insert(entry);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (entry.mounted) entry.remove();
-    });
   }
 }

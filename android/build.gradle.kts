@@ -1,3 +1,5 @@
+apply(from = File(rootDir, "namespace_fix.gradle"))
+
 allprojects {
     repositories {
         google()

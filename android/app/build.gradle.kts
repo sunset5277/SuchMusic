@@ -33,8 +33,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         // 正式包只保留 ARM 架构（x86_64 仅模拟器需要，debug 包不受影响）
-        ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+        // --split-per-abi 拆包构建时不能设置 abiFilters（与 splits 冲突），由 splits 机制自行按 ABI 拆分
+        if (!project.hasProperty("split-per-abi")) {
+            ndk {
+                abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+            }
         }
     }
 
@@ -50,9 +53,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            // 代码收缩 + 资源收缩，减小包体
-            isMinifyEnabled = false // TODO: 对照实验，验证后恢复
-            isShrinkResources = false // TODO: 对照实验，验证后恢复
+            // 代码收缩 + 资源收缩，减小包体（R8：缩减无用代码 + 混淆重命名；需真机回归验证）
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
